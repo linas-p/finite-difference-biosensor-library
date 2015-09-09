@@ -2,6 +2,8 @@
 #define UTILS_H
 
 #include<vector>
+#include <stdio.h>
+
 ;
 void swap_arrays(double **array1, double **array2);
 
