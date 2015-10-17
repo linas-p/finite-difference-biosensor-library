@@ -52,7 +52,7 @@ void Calculator::setLocalParams(double s0, double p0, double Km, double Vmax, st
     }
 }
 
-std::string Calculator::print() {
+std::string Calculator::print(struct bio_params *params) {
     std::stringstream m;
     m << "Global conditions:\n  n = " <<  params_->n << " dt = " << params_->dt << " type " << params_->resp_t_meth << " ne = " << params_->ne << " output goes to: " << params_->out_file_name << "\n";
 
@@ -64,128 +64,263 @@ std::string Calculator::print() {
     return m.str();
 }
 
-void Calculator::solve(struct bio_params *params) {
+void Calculator::solve(struct bio_params *bio_info, void *ptr,
+                          void (*callback_crunched)(void *, double, std::string),
+                          std::vector<double> & I,
+                          std::vector<double> & S,
+                          std::vector<double> & T,
+                          std::vector<double> & P) {
 
-    unsigned int n(params_->n);
-    unsigned int layer_count(params_->layer_count);
-    unsigned int grid_points(layer_count * n + 1);
+   //Kintamasis nurodo ties kuriuo sluoksniu esame
+    int layer, a;
 
-    double *last_s    = new double[grid_points];//$
-    double *current_s = new double[grid_points];//$
-    double *last_p    = new double[grid_points];//$
-    double *current_p = new double[grid_points];//$
-	double i(0.), last_i(0.);
+    //Srovės tankis
+    double i, last_i = 0;
 
-    fill_array( last_s, grid_points, 0 );
-    fill_array( last_p, grid_points, 0 );
-    current_s[grid_points-1] = last_s[grid_points-1] = params_->s0;
-    current_p[grid_points-1] = last_p[grid_points-1] = params_->p0;
-    current_s[0] = last_s[0] = 0;
-    current_p[0] = last_p[0] = 0;
+    // Agreguoti laikas ir srove rezultui
+    std::vector<double> i_list, t_list;
 
-    //Konstantos naudojamos cikle
-    const double vmax(params_->vmax);
-    const double km(params_->km);
-    const double i_const(params_->ne * F * params_->layers[0].Dp / params_->layers[0].dx);
-    double kinetics_part(0.), s0(params_->s0);
+    //Kintamasis rodo kaip pakito srovės tankis nuo praėjusios iteracijos
+    double di;
 
-    layer_params current_layer, next_layer;
-    double dx, dx0;
-    double enzyme, layer_ws, layer_wp;
-    unsigned int a, layer;
+    //Medžiagų koncentracijų masyvai
+    double *current_s, *last_s;
+    double *current_p, *last_p;
+
+    // Agreguoti produkto ir substrato sprendiniai rezultatui
+    std::vector<double> s_list, p_list;
+
+    //Tinklo taškų skaičius per visus biojutiklio sluoksnius
+    int point_count;
 
     //Iteracija pagal laiką
-    const double dt(params_->dt);
-    double execution_time(0.);
-    unsigned int t(0);
-    bool response_time_reached(false);
+    unsigned int t = 0;
 
-	i_rez_.push_back(i);
-    t_rez_.push_back(execution_time);
-   	concatenate_vals( last_s, s_rez_, grid_points);
-   	concatenate_vals( last_p, p_rez_, grid_points);
+    //Simuliacijos laikas sekundėmis
+    double execution_time;
+
+    //Kintamasis nurodo ar jau pasiektas atsako laikas
+    bool response_time_reached;
+
+    //Kintamasis nurodo, kad esame ties sluoksnio kraštu (ties sluoksnių sandūra)
+    bool is_boundary;
+
+    //Kinetikos dedamoji
+    double kinetics_part;
+
+    //Rezultatų saugojimui skirtas failas
+    std::ofstream output_file;
+
+
+    //Sukuriami lokalūs kintamieji dėl optimizavimo
+    double km                    = bio_info->km;
+    double dt                    = bio_info->dt;
+    int n                        = bio_info->n;
+    enum resp_method resp_t_meth = bio_info->resp_t_meth;
+    double min_t                 = bio_info->cond_t;
+    double resp_t                = bio_info->cond_t;
+    std::string out_file_name          = bio_info->out_file_name;
+    double s0                    = bio_info->s0;
+    double p0                    = bio_info->p0;
+    int layer_count              = bio_info->layer_count;
+    bool enz_layer;
+    double Ds, Ds0, Ds1;
+    double Dp, Dp0, Dp1;
+    double dx, dx0, dx1;
+
+    double i_w = bio_info->ne * F * bio_info->layers[0].Dp / bio_info->layers[0].dx;
+
+
+    //Sukuriamas rezultatų saugojimui skirtas failas
+    output_file.open(out_file_name.c_str());
+    //output_file.close();
+
+    //Apskaičiuojamas tinklo taškų skaičius per visus biojutiklio sluoksnius
+    point_count = layer_count * n + 1;
+
+    //Medžiagų koncentracijų masyvams išskiriama atmintis
+    last_s    = new double[point_count];//
+    current_s = new double[point_count];//
+    last_p    = new double[point_count];//
+    current_p = new double[point_count];//
+
+    //Priskiriamos pradinės ir kai kurios kraštinės sąlygos
+    fill_array(last_s, point_count - 1, 0);
+    fill_array(last_p, point_count - 1, 0);
+    last_s[point_count - 1] = s0;
+    last_p[point_count - 1] = p0;
+    current_s[point_count - 1] = s0;
+    current_p[point_count - 1] = p0;
+    current_p[0] = 0;
+
+    //Pradiniai taskai
+    concatenate_vals( last_s, s_list, point_count);
+    concatenate_vals( last_p, p_list, point_count);
+    t_list.push_back(0.);
+    i_list.push_back(0.);
+    //Kiekvienam sluoksniui apskaičiuojami žingsniai pagal erdvę
+    //space_steps = new double[layer_count];//
+
+    for (a = 0; a < layer_count; a++) {
+        //space_steps[a] = bio_info->layers[a].dx;
+        dt = std::min(dt, pow(bio_info->layers[a].dx,2)/(std::max(bio_info->layers[a].Dp,bio_info->layers[a].Ds)*2));
+    }
+    // Stabilumo sąlyga parenkamas "geras" dt
+    if(dt != bio_info->dt) {
+
+        if (callback_crunched != NULL) {
+            std::stringstream m;
+            m << "New delta t set: " << dt << " form old: " << bio_info->dt << "\n";
+            //m << 	print(bio_info);
+			callback_crunched(ptr, 0, m.str());
+        }
+    }
+    double vmaxt = bio_info->vmax*dt;
 
 
     std::clock_t start;
     start = std::clock();
     do {
+        //Iteruojama per biojutiklio sluoksnius, skaičiuojamos medžiagų koncentracijos
+        layer = 0;
+        //Surenkami pirmojo sluoksnio parametrai
+        enz_layer = bio_info->layers[layer].enz_layer;
+        Ds = bio_info->layers[layer].Ds;
+        Dp = bio_info->layers[layer].Dp;
+        dx = bio_info->layers[layer].dx;
 
-        for (layer = 0; layer < layer_count; layer++) {
+        for (a = 1; a < point_count - 1; a++) {
 
-            current_layer = params_->layers[layer];
-            dx = pow(current_layer.dx, 2);
-            enzyme = ((double)current_layer.enz_layer) * dt * vmax;
-            layer_ws = current_layer.Ds * dt / dx;
-            layer_wp = current_layer.Dp * dt / dx;
+            //Nustatome ar tai nėra sluoksnių sandūra
+            is_boundary = !(a % n);
 
-            for (a = n * layer + 1; a < n * (layer + 1); a++) {
+            //Reikšmės sluoksnių sandūrose bus skaičiuojamos vėliau pagal derinimo sąlygas
+            if (is_boundary) {
+                //Nustatome kuriame sluoksnyje esame
+                layer++;
+                //Surenkami kito sluoksnio parametrai
+                enz_layer = bio_info->layers[layer].enz_layer;
+                Ds = bio_info->layers[layer].Ds;
+                Dp = bio_info->layers[layer].Dp;
+                dx = bio_info->layers[layer].dx;
+            } else {
+                //Įskaičiuojama difuzijos įtaka
+                current_s[a] = dt * Ds * \
+                               (last_s[a + 1] - 2 * last_s[a] + last_s[a - 1]) / (dx * dx) + \
+                               last_s[a];
 
-                current_s[a] = last_s[a] + layer_ws * (last_s[a + 1] - 2 * last_s[a] + last_s[a - 1]);
-                kinetics_part = enzyme*last_s[a]/(km+last_s[a]);
-                current_s[a] -= kinetics_part;
+                current_p[a] = dt * Dp * \
+                               (last_p[a + 1] - 2 * last_p[a] + last_p[a - 1]) / (dx * dx) + \
+                               last_p[a];
 
-                current_p[a] = last_p[a] + layer_wp * (last_p[a + 1] - 2 * last_p[a] + last_p[a - 1]);
-                current_p[a] += kinetics_part;
+                //Jeigu sluoksnis yra fermentinis, tuomet prisideda ir kinetikos dalis
+                if (enz_layer) {
+                    kinetics_part = vmaxt * last_s[a] / \
+                                    (km + last_s[a] );
+                    current_s[a] -= kinetics_part;
+                    current_p[a] += kinetics_part;
+                }
             }
-		}
+        }
 
-
+        //Sluoksnių sandūroms pritaikomos derinimo sąlygos
         for (layer = 0; layer < layer_count - 1; layer++) {
             //Apskaičiuojame kuriame taške yra layer ir layer + 1 sluoksnių sandūra
             a = n * (layer + 1);
 
-            current_layer = params_->layers[layer];
-            next_layer = params_->layers[layer + 1];
+            Ds0 = bio_info->layers[layer].Ds;
+            Dp0 = bio_info->layers[layer].Dp;
+            dx0 = bio_info->layers[layer].dx;
 
-            dx = next_layer.Ds * current_layer.dx;
-            dx0 = current_layer.Ds * next_layer.dx;
-            current_s[a] = ((dx * current_s[a + 1])+ (dx0 * current_s[a - 1]))/((dx + dx0));
+            Ds1 = bio_info->layers[layer + 1].Ds;
+            Dp1 = bio_info->layers[layer + 1].Dp;
+            dx1 = bio_info->layers[layer + 1].dx;
 
-            dx = next_layer.Dp * current_layer.dx;
-            dx0 = current_layer.Dp * next_layer.dx;
-            current_p[a] = ((dx * current_p[a + 1] ) + (dx0 * current_p[a - 1]))/((dx + dx0));
+            current_s[a] = (Ds1 * dx0 * current_s[a + 1] + Ds0 * dx1 * current_s[a - 1]) / \
+                           (Ds1 * dx0 + Ds0 * dx1);
+            current_p[a] = (Dp1 * dx0 * current_p[a + 1] + Dp0 * dx1 * current_p[a - 1]) / \
+                           (Dp1 * dx0 + Dp0 * dx1);
         }
 
         //Kraštinė substrato nepratekėjimo sąlyga
         current_s[0] = current_s[1];
-        current_s[grid_points-1] = s0;
+        current_s[point_count-1] = s0;
         current_p[0] = 0.;
-        current_p[grid_points-1] = 0.;
-
-        //Apskaičiuojamas laikas
-        execution_time += dt;
-        t++;
-
+        current_p[point_count-1] = 0.;
         //Skaičiuojamas srovės tankis
-        i = i_const * (current_p[1] - current_p[0]);
-        response_time_reached = (i > 1e-30) && ((execution_time / i) * (fabs(i - last_i) / dt) <= EPSILON);
+        i = i_w * (current_p[1] - current_p[0]);
+        di = fabs(i - last_i);
         last_i = i;
 
         //Masyvai sukeičiami vietomis
         swap_arrays(&current_s, &last_s);
         swap_arrays(&current_p, &last_p);
 
+        //Apskaičiuojamas laikas
+        t++;
+        execution_time = t * dt;
 
-        if ((t % (INTERVAL)) == 0) {
-            i_rez_.push_back(i);
-            t_rez_.push_back(execution_time);
-        	concatenate_vals( last_s, s_rez_, grid_points);
-        	concatenate_vals( last_p, p_rez_, grid_points);
+        //Spausdinami rezultatai
+        if ((t % INTERVAL) == 0) {
+            //output_file.open(out_file_name.c_str(), std::ofstream::out | std::ofstream::app);
+            output_file <<  i << "," << execution_time << "\n";
+            //output_file.close();
+
+            i_list.push_back(i);
+            t_list.push_back( execution_time );
+            concatenate_vals( last_s, s_list, point_count);
+            concatenate_vals( last_p, p_list, point_count);
+
+            /*if (callback_crunched != NULL) {
+                std::stringstream m;
+                if(i > 1e-30) {
+                    m << "Stationarity: " << (execution_time / i) * fabs(di / dt) << "\n";
+                }
+
+                callback_crunched(ptr, execution_time, m.str());
+            }*/
         }
 
-    } while(!response_time_reached );
+        //Nustatoma ar tęsti simuliaciją
+        switch (resp_t_meth) {
+        case MIN_TIME:
+            if (execution_time < min_t) {
+                response_time_reached = false;
+                break;
+            }
+            //Jeigu jau pasiekė minimalų laiką, tuomet tikrinama pagal DEFAULT_TIME sąlygas
+        case DEFAULT_TIME:
+            if (i > 1e-30)
+                response_time_reached = ((execution_time / i) * fabs(di / dt) <= EPSILON);
+            else
+                response_time_reached = false;
+            break;
+        case FIXED_TIME:
+            response_time_reached = (execution_time >= resp_t);
+            break;
+        }
+    } while (!response_time_reached);
 
     std::cout << "t " << t << " " << execution_time << std::endl;
-    std::cout << "time " << (std::clock()-start)/ (double) CLOCKS_PER_SEC << std::endl;
+    std::cout << "loop time " << (std::clock()-start)/ (double) CLOCKS_PER_SEC << std::endl;
 
-	i_rez_.push_back(i);
-    t_rez_.push_back(execution_time);
-   	concatenate_vals( last_s, s_rez_, grid_points);
-   	concatenate_vals( last_p, p_rez_, grid_points);
+    //Atspausdinamas paskutinis taškas
+    //output_file.open(out_file_name.c_str(), std::ofstream::out | std::ofstream::app);
+    output_file <<  i << "," <<  execution_time << "\n";
+    output_file.close();
+    if (callback_crunched != NULL)
+        callback_crunched(ptr, execution_time, "");
 
-    delete [] last_s;
-    delete [] last_p;
-    delete [] current_p;
+
+    I = i_list;
+    S = s_list;
+    P = p_list;
+    T = t_list;
+
+    //Atlaisvinama atmintis
     delete [] current_s;
+    delete [] last_s;
+    delete [] current_p;
+    delete [] last_p;
 }
 
