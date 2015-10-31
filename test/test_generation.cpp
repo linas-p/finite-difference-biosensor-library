@@ -1,8 +1,10 @@
-/*
- *  Copyright (c) Linas Petkevicius 2015
- *  Vilnius University
- *  GNU General Public license
- */
+/* Copyright 2015
+ * Linas Petkevicius
+ * Vilnius University
+ * GNU General Public License
+ * */
+
+#include <gtest/gtest.h>
 
 #include <iostream>
 #include <ctime>
@@ -14,7 +16,6 @@
 
 using FDCalculator::bio_params;
 using FDCalculator::solve_explicit;
-using FDCalculator::solve_explicit_slow;
 using FDCalculator::setGlobalParams;
 
 void callback_crunched(void *ptr, double time, std::string info) {
@@ -24,7 +25,7 @@ void callback_crunched(void *ptr, double time, std::string info) {
     std::cout << "simulated "<< time << " (s) \n" << std::endl;
 }
 
-int main() {
+TEST(fake, iliustration) {
     std::vector< std::vector< double > > layer_params;
     std::vector<double> lay1, lay2;
     lay1.push_back(300*1e-6);
@@ -45,5 +46,11 @@ int main() {
     print(p);
 
     solve_explicit(p, NULL, &callback_crunched, &t, &t, &t, &t);
-    solve_explicit_slow(p, NULL, &callback_crunched, &t, &t, &t, &t);
+}
+
+
+int main(int argc, char **argv) {
+    testing::InitGoogleTest(&argc, argv);
+
+    return RUN_ALL_TESTS();
 }
