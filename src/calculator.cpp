@@ -21,7 +21,7 @@ void saveResult(struct bio_params *params) {
     }
     output_file_.close();*/
 }
-std::string print(struct bio_params *params) {
+std::string print(const struct bio_params *params) {
     std::stringstream m;
     m << "Global conditions:\n  n = " <<  params->n << " dt = "  \
       << params->dt << " type " << params->resp_t_meth   \
@@ -133,8 +133,8 @@ void solve_explicit(struct bio_params *bio_info, void *ptr,  \
     current_p[0] = 0;
 
     //  Pradiniai taskai
-    //  concatenate_vals( last_s, s_list, point_count);
-    //  concatenate_vals( last_p, p_list, point_count);
+    concatenate_vals( last_s, &s_list, point_count);
+    concatenate_vals( last_p, &p_list, point_count);
     t_list.push_back(0.);
     i_list.push_back(0.);
     //  Kiekvienam sluoksniui apskaičiuojami žingsniai pagal erdvę
@@ -249,8 +249,8 @@ void solve_explicit(struct bio_params *bio_info, void *ptr,  \
 
             i_list.push_back(i);
             t_list.push_back(execution_time);
-            //  concatenate_vals( last_s, s_list, point_count);
-            //  concatenate_vals( last_p, p_list, point_count);
+            concatenate_vals( last_s, &s_list, point_count);
+            concatenate_vals( last_p, &p_list, point_count);
 
             /*if (callback_crunched != NULL) {
                 std::stringstream m;
@@ -297,10 +297,10 @@ void solve_explicit(struct bio_params *bio_info, void *ptr,  \
         callback_crunched(ptr, execution_time, "");
 
 
-    /*I = i_list;
-    S = s_list;
-    P = p_list;
-    T = t_list;*/
+    *I = i_list;
+    *S = s_list;
+    *P = p_list;
+    *T = t_list;
 
     //  Atlaisvinama atmintis
     delete [] current_s;
@@ -322,7 +322,7 @@ void setGlobalParams(bio_params * p, unsigned int N, double dt,  \
     p->out_file_name = file;
 }
 
-void setLocalParams(bio_params * p, double s0, double p0, double Km,  \
+bool setLocalParams(bio_params * p, double s0, double p0, double Km,  \
                     double Vmax, std::vector<std::vector<double> > inner) {
     p->s0 = s0;
     p->p0 = p0;
@@ -340,12 +340,17 @@ void setLocalParams(bio_params * p, double s0, double p0, double Km,  \
         dx = std::min(dx, p->layers[i].dx);
         D = std::max(D, std::max(p->layers[i].Dp, p->layers[i].Ds));
     }
+     if(unlikely((D==0) || (dx < 1e-20) )) {
+        return false;
+    }
     dt = pow(dx, 2)/(2*D);
     if (dt < p->dt) {
         std::cout << "For converge conditions dt were changed from " \
                   << p->dt << " to " << dt << "!" << std::endl;
         p->dt = dt;
     }
+
+    return true;
 }
 
 

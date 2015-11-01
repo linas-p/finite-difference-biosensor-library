@@ -15,7 +15,7 @@ namespace FDCalculator {
 
 
 
-void solve_explicit_slow(struct bio_params *bio_info, void *ptr,  \
+bool solve_explicit_slow(const struct bio_params *bio_info, void *ptr,  \
                          void (*callback_crunched)(void *, double, std::string),  \
                          std::vector<double> * I,  \
                          std::vector<double> * S,  \
@@ -29,12 +29,10 @@ void solve_explicit_slow(struct bio_params *bio_info, void *ptr,  \
 
     //  Agreguoti laikas ir srove rezultui
     std::vector<double> i_list, t_list;
-    i_list.reserve(500000);t_list.reserve(500000);
+    //i_list.reserve(500000);t_list.reserve(500000);
 
     //  Kintamasis rodo kaip pakito srovės tankis nuo praėjusios iteracijos
     double di;
-
-
 
     //  Agreguoti produkto ir substrato sprendiniai rezultatui
     std::vector<double> s_list, p_list;
@@ -54,12 +52,8 @@ void solve_explicit_slow(struct bio_params *bio_info, void *ptr,  \
     //  Kintamasis nurodo, kad esame ties sluoksnio kraštu (sluoksnių sandūra)
     bool is_boundary;
 
-    //  Kinetikos dedamoji
-    double kinetics_part;
-
     //  Rezultatų saugojimui skirtas failas
     std::ofstream output_file;
-
 
     //  Sukuriami lokalūs kintamieji dėl optimizavimo
     double km                    = bio_info->km;
@@ -72,10 +66,11 @@ void solve_explicit_slow(struct bio_params *bio_info, void *ptr,  \
     double s0                    = bio_info->s0;
     double p0                    = bio_info->p0;
     int layer_count              = bio_info->layer_count;
-    bool enz_layer;
-    double Ds, Ds0, Ds1;
-    double Dp, Dp0, Dp1;
-    double dx, dx0, dx1;
+    double enz_layer;
+    double Ds0, Ds1;
+    double Dp0, Dp1;
+    double dx0, dx1;
+    double dx_sq, dtDs, dtDp;
 
     double i_w = bio_info->ne * F * bio_info->layers[0].Dp / \
                  bio_info->layers[0].dx;
@@ -91,37 +86,25 @@ void solve_explicit_slow(struct bio_params *bio_info, void *ptr,  \
     //  Medžiagų koncentracijų masyvai
     std::vector<double> current_s(point_count, 0.), last_s(point_count, 0.);
     std::vector<double> current_p(point_count, 0.), last_p(point_count, 0.);
-
+    std::vector<double> last_kinetics(point_count, 0.);
 
     //  Priskiriamos pradinės ir kai kurios kraštinės sąlygos
-    last_s[point_count - 1] = s0;
-    last_p[point_count - 1] = p0;
-    current_s[point_count - 1] = s0;
-    current_p[point_count - 1] = p0;
-    current_p[0] = 0;
+    if( unlikely(!(set_initial(&last_s, 0, 0, s0)  \
+                   && set_initial(&last_p, 0, 0, p0)  \
+                   && set_initial(&current_p, 0, 0, s0) \
+                   && set_initial(&current_s, 0, 0, p0) \
+                  ))) {
+        return false;
+    };
+
 
     //  Pradiniai taskai
-    //  concatenate_vals( last_s, s_list, point_count);
-    //  concatenate_vals( last_p, p_list, point_count);
+    S->insert(S->end(), last_s.begin(), last_s.end());
+    P->insert(P->end(), last_p.begin(), last_p.end());
     t_list.push_back(0.);
     i_list.push_back(0.);
 
-    for (a = 0; a < layer_count; a++) {
-        //  space_steps[a] = bio_info->layers[a].dx;
-        dt = std::min(dt, pow(bio_info->layers[a].dx, 2)/  \
-                      (std::max(bio_info->layers[a].Dp, bio_info->layers[a].Ds)*2));
-    }
-    //  Stabilumo sąlyga parenkamas "geras" dt
-    if (dt != bio_info->dt) {
-        if (callback_crunched != NULL) {
-            std::stringstream m;
-            m << "New delta t set: " << dt << " form old: " << bio_info->dt << "\n";
-            //  m << print(bio_info);
-            callback_crunched(ptr, 0, m.str());
-        }
-    }
     double vmaxt = bio_info->vmax*dt;
-
 
     std::clock_t start;
     start = std::clock();
@@ -130,40 +113,40 @@ void solve_explicit_slow(struct bio_params *bio_info, void *ptr,  \
         layer = 0;
         //  Surenkami pirmojo sluoksnio parametrai
         enz_layer = bio_info->layers[layer].enz_layer;
-        Ds = bio_info->layers[layer].Ds;
-        Dp = bio_info->layers[layer].Dp;
-        dx = bio_info->layers[layer].dx;
+        dtDs = bio_info->layers[layer].Ds*dt;
+        dtDp = bio_info->layers[layer].Dp*dt;
+        dx_sq = pow(bio_info->layers[layer].dx,2);
+
+
+        for (a = 1; a < point_count - 1; a++) {
+            last_kinetics[a] = vmaxt * last_s[a] /  \
+                               (km + last_s[a]);
+        }
 
         for (a = 1; a < point_count - 1; a++) {
             //  Nustatome ar tai nėra sluoksnių sandūra
             is_boundary = !(a % n);
 
             //  Reikšmės sluoksnių sandūrose bus skaičiuojamos vėliau
-            if (is_boundary) {
+            if (unlikely(is_boundary)) {
                 //  Nustatome kuriame sluoksnyje esame
                 layer++;
                 //  Surenkami kito sluoksnio parametrai
                 enz_layer = bio_info->layers[layer].enz_layer;
-                Ds = bio_info->layers[layer].Ds;
-                Dp = bio_info->layers[layer].Dp;
-                dx = bio_info->layers[layer].dx;
+                dtDs = bio_info->layers[layer].Ds*dt;
+                dtDp = bio_info->layers[layer].Dp*dt;
+                dx_sq = pow(bio_info->layers[layer].dx,2);
             } else {
                 //  Įskaičiuojama difuzijos įtaka
-                current_s[a] = dt * Ds *  \
-                               (last_s[a + 1] - 2 * last_s[a] + last_s[a - 1]) / (dx * dx) +  \
-                               last_s[a];
+                current_s[a] =  dtDs *  \
+                                (last_s[a + 1] - 2 * last_s[a] + last_s[a - 1]) / (dx_sq) +  \
+                                last_s[a] - enz_layer*last_kinetics[a];
+                //  no branching with kinetics
 
-                current_p[a] = dt * Dp *  \
-                               (last_p[a + 1] - 2 * last_p[a] + last_p[a - 1]) / (dx * dx) +  \
-                               last_p[a];
+                current_p[a] =   dtDp *  \
+                                 (last_p[a + 1] - 2 * last_p[a] + last_p[a - 1]) / (dx_sq) +  \
+                                 last_p[a] + enz_layer*last_kinetics[a];
 
-                //  Jeigu sluoksnis yra fermentinis, tuomet prisideda kinetika
-                if (enz_layer) {
-                    kinetics_part = vmaxt * last_s[a] /  \
-                                    (km + last_s[a]);
-                    current_s[a] -= kinetics_part;
-                    current_p[a] += kinetics_part;
-                }
             }
         }
 
@@ -217,8 +200,8 @@ void solve_explicit_slow(struct bio_params *bio_info, void *ptr,  \
 
             i_list.push_back(i);
             t_list.push_back(execution_time);
-            //  concatenate_vals( last_s, s_list, point_count);
-            //  concatenate_vals( last_p, p_list, point_count);
+            S->insert(S->end(), last_s.begin(), last_s.end());
+            P->insert(P->end(), last_p.begin(), last_p.end());
 
             /*if (callback_crunched != NULL) {
                 std::stringstream m;
@@ -251,7 +234,7 @@ void solve_explicit_slow(struct bio_params *bio_info, void *ptr,  \
             response_time_reached = (execution_time >= resp_t);
             break;
         }
-    } while (!response_time_reached);
+    } while (unlikely(!response_time_reached));
 
     std::cout << "t " << t << " " << execution_time << std::endl;
     double tt = (std::clock()-start)/ static_cast<double>(CLOCKS_PER_SEC);
@@ -265,14 +248,23 @@ void solve_explicit_slow(struct bio_params *bio_info, void *ptr,  \
     if (callback_crunched != NULL)
         callback_crunched(ptr, execution_time, "");
 
+    *I = i_list;
+    *T = t_list;
 
-    /*I = i_list;
-    S = s_list;
-    P = p_list;
-    T = t_list;*/
-
+    return true;
 }
 
+bool set_initial(std::vector<double> * grid, double region, double boundary_1, double boundary_2) {
 
+    int n = grid->size()-1;
+    if(n < 1) {
+        return false;
+    }
+
+    (*grid)[0] = boundary_1;
+    std::fill(grid->begin()+1, grid->end()-1, region);
+    (*grid)[n] = boundary_2;
+    return true;
+}
 
 }  //  namespace FDCalculator

@@ -16,13 +16,38 @@
 
 using FDCalculator::bio_params;
 using FDCalculator::solve_explicit;
+using FDCalculator::solve_explicit_slow;
 using FDCalculator::setGlobalParams;
+using FDCalculator::set_initial;
 
 void callback_crunched(void *ptr, double time, std::string info) {
     if (!info.empty()) {
         std::cout << info.c_str();
     }
     std::cout << "simulated "<< time << " (s) \n" << std::endl;
+}
+
+TEST(set_initial, empty) {
+    std::vector<double> a;
+    EXPECT_EQ(set_initial(&a, 1, 1, 1), false);
+    a.push_back(1.);
+    EXPECT_EQ(set_initial(&a, 1, 1, 1), false);
+    a.push_back(2.);
+    EXPECT_EQ(set_initial(&a, 1, 1, 1), true);
+    a.push_back(3.);
+    EXPECT_EQ(set_initial(&a, 0, 2, 3), true);
+    EXPECT_EQ(a[0], 2);
+    EXPECT_EQ(a[a.size()-1], 3);
+
+}
+
+TEST(set_initial, normal_cases){
+	std::vector<double> a= {1,2,3};
+    EXPECT_EQ(set_initial(&a, 0, 3, 1), true);
+    EXPECT_EQ(a[0], 3);
+    EXPECT_EQ(a[1], 0);
+    EXPECT_EQ(a[2], 1);
+
 }
 
 TEST(fake, iliustration) {
@@ -46,6 +71,7 @@ TEST(fake, iliustration) {
     print(p);
 
     solve_explicit(p, NULL, &callback_crunched, &t, &t, &t, &t);
+    solve_explicit_slow(p, NULL, &callback_crunched, &t, &t, &t, &t);
 }
 
 

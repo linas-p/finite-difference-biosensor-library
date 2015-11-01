@@ -28,6 +28,7 @@ include_directories ("${GTEST_DIR}/include")
 set (TEST_EXEC "${LIB_NAME}_test")
 set (TEST_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/test")
 file (GLOB_RECURSE TEST_SRC_FILES "${TEST_SRC_DIR}/*.cpp")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -g -std=c++11 -pedantic -I. -Wall -pthread -ggdb -fprofile-arcs -ftest-coverage")
 add_executable ("${TEST_EXEC}" ${TEST_SRC_FILES})
 target_link_libraries ("${TEST_EXEC}" "${LIB_NAME}" "gtest" "gtest_main")
 
