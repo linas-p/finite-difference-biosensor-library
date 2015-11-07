@@ -6,8 +6,8 @@
 
 #ifndef INCLUDE_FDCALCULATOR_UTILS_H_
 #define INCLUDE_FDCALCULATOR_UTILS_H_
-#define unlikely(x)    __builtin_expect((bool)(x), false)
-#define likely(x)    __builtin_expect((bool)(x), true)
+#define unlikely(x)    __builtin_expect(static_cast<bool>(x), false)
+#define likely(x)    __builtin_expect(static_cast<bool>(x), true)
 
 #include <stdio.h>
 #include <vector>

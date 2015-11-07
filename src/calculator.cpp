@@ -21,6 +21,7 @@ void saveResult(struct bio_params *params) {
     }
     output_file_.close();*/
 }
+
 std::string print(const struct bio_params *params) {
     std::stringstream m;
     m << "Global conditions:\n  n = " <<  params->n << " dt = "  \
@@ -42,6 +43,33 @@ std::string print(const struct bio_params *params) {
     }
     return m.str();
 }
+std::string print(const struct biser_params *params) {
+    std::stringstream m;
+    m << "Global conditions:\n  n = " <<  params->n << " dt = "  \
+      << params->dt << " type " << params->resp_t_meth   \
+      << " ne = " << params->ne << " output goes to: "  \
+      << params->out_file_name << "\n";
+
+    m << "Initial conditions: \n  s0= " << params->equations[0].b0  \
+      << " p0= " << params->equations[1].b0 << " km= " <<\
+      params->equations[1].km  \
+      << " vmax= " << params->equations[1].vmax  \
+      << " number of layers= " << params->layer_count << " \n";
+
+    m << "  layer " << 0 << " params: Ds= " << params->equations[0].D[0] <<  \
+      " Dp= " << params->equations[1].D[0] << " d= " \
+      << params->equations[0].dx*params->n << " with accuracy: "  \
+      << params->equations[0].dx << " is enzyme? "  \
+      << params->equations[0].enz_layer[0] << "\n";
+    m << "  layer " << 1 << " params: Ds= " << params->equations[0].D[1] <<  \
+      " Dp= " << params->equations[1].D[1] << " d= "\
+      << params->equations[1].dx*params->n << " with accuracy: "  \
+      << params->equations[1].dx << " is enzyme? "  \
+      << params->equations[0].enz_layer[1] << "\n";
+    return m.str();
+}
+
+
 
 void solve_explicit(struct bio_params *bio_info, void *ptr,  \
                     void (*callback_crunched)(void *, double, std::string),  \
@@ -133,8 +161,8 @@ void solve_explicit(struct bio_params *bio_info, void *ptr,  \
     current_p[0] = 0;
 
     //  Pradiniai taskai
-    concatenate_vals( last_s, &s_list, point_count);
-    concatenate_vals( last_p, &p_list, point_count);
+    concatenate_vals(last_s, &s_list, point_count);
+    concatenate_vals(last_p, &p_list, point_count);
     t_list.push_back(0.);
     i_list.push_back(0.);
     //  Kiekvienam sluoksniui apskaičiuojami žingsniai pagal erdvę
@@ -143,13 +171,14 @@ void solve_explicit(struct bio_params *bio_info, void *ptr,  \
     for (a = 0; a < layer_count; a++) {
         //  space_steps[a] = bio_info->layers[a].dx;
         dt = std::min(dt, pow(bio_info->layers[a].dx, 2)/  \
-                      (std::max(bio_info->layers[a].Dp, bio_info->layers[a].Ds)*2));
+                      (std::max(bio_info->layers[a].Dp, \
+                                bio_info->layers[a].Ds)*2));
     }
     //  Stabilumo sąlyga parenkamas "geras" dt
     if (dt != bio_info->dt) {
         if (callback_crunched != NULL) {
             std::stringstream m;
-            m << "New delta t set: " << dt << " form old: " << bio_info->dt << "\n";
+            m << "New dt set: " << dt << " form old: " << bio_info->dt << "\n";
             //  m << print(bio_info);
             callback_crunched(ptr, 0, m.str());
         }
@@ -160,7 +189,8 @@ void solve_explicit(struct bio_params *bio_info, void *ptr,  \
     std::clock_t start;
     start = std::clock();
     do {
-        //  Iteruojama per biojutiklio sluoksnius, skaičiuojamos medžiagų koncentracijos
+        //  Iteruojama per biojutiklio sluoksnius,
+        //  skaičiuojamos medžiagų koncentracijos
         layer = 0;
         //  Surenkami pirmojo sluoksnio parametrai
         enz_layer = bio_info->layers[layer].enz_layer;
@@ -184,12 +214,12 @@ void solve_explicit(struct bio_params *bio_info, void *ptr,  \
             } else {
                 //  Įskaičiuojama difuzijos įtaka
                 current_s[a] = dt * Ds *  \
-                               (last_s[a + 1] - 2 * last_s[a] + last_s[a - 1]) / (dx * dx) +  \
-                               last_s[a];
+                               (last_s[a + 1] - 2 * last_s[a] + last_s[a - 1]) \
+                               / (dx * dx) + last_s[a];
 
                 current_p[a] = dt * Dp *  \
-                               (last_p[a + 1] - 2 * last_p[a] + last_p[a - 1]) / (dx * dx) +  \
-                               last_p[a];
+                               (last_p[a + 1] - 2 * last_p[a] + last_p[a - 1]) \
+                               / (dx * dx) + last_p[a];
 
                 //  Jeigu sluoksnis yra fermentinis, tuomet prisideda kinetika
                 if (enz_layer) {
@@ -249,8 +279,8 @@ void solve_explicit(struct bio_params *bio_info, void *ptr,  \
 
             i_list.push_back(i);
             t_list.push_back(execution_time);
-            concatenate_vals( last_s, &s_list, point_count);
-            concatenate_vals( last_p, &p_list, point_count);
+            concatenate_vals(last_s, &s_list, point_count);
+            concatenate_vals(last_p, &p_list, point_count);
 
             /*if (callback_crunched != NULL) {
                 std::stringstream m;
@@ -340,7 +370,7 @@ bool setLocalParams(bio_params * p, double s0, double p0, double Km,  \
         dx = std::min(dx, p->layers[i].dx);
         D = std::max(D, std::max(p->layers[i].Dp, p->layers[i].Ds));
     }
-     if(unlikely((D==0) || (dx < 1e-20) )) {
+    if (unlikely((D == 0) || (dx < 1e-20))) {
         return false;
     }
     dt = pow(dx, 2)/(2*D);
@@ -348,6 +378,44 @@ bool setLocalParams(bio_params * p, double s0, double p0, double Km,  \
         std::cout << "For converge conditions dt were changed from " \
                   << p->dt << " to " << dt << "!" << std::endl;
         p->dt = dt;
+    }
+
+    return true;
+}
+
+int getMeshSize(int n, int layers) {
+    assert(unlikely(!(n < 2)));
+    assert(unlikely(!(layers < 1)));
+    int size = n * layers + 1;
+    return size;
+}
+
+bool setEqParams(proc_params * p,
+                 const int n,
+                 const int layers,
+                 const double vmax,
+                 const double km,
+                 const double delta,
+                 const double b0,
+                 const double dt,
+                 const std::vector<double> diff,
+                 const std::vector<double> enz
+                ) {
+    if (unlikely((diff.size() != enz.size()) || diff.size() < 1)) {
+        return false;
+    }
+
+    int grid_count = getMeshSize(n, layers);
+
+    for (unsigned int i = 0; i < diff.size(); i++) {
+        p->init(layers, grid_count);
+        copy(diff.begin(), diff.end(), p->D);
+        copy(enz.begin(), enz.end(), p->enz_layer);
+        p->vmax = vmax;
+        p->km = km;
+        p->dx = delta/n;
+        p->b0 = b0;
+        p->vmaxdt = vmax*dt;
     }
 
     return true;
