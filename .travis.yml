@@ -1,0 +1,37 @@
+sudo: false
+language: cpp
+compiler:
+  - g++
+  - clang
+
+install:
+- if [ "$CXX" = "g++" ]; then export CXX="g++-4.8" CC="gcc-4.8"; fi
+
+addons:
+  apt:
+    sources:
+    - ubuntu-toolchain-r-test
+    - ppa:boost-latest-ppa
+    packages:
+    - gcc-4.8
+    - g++-4.8
+    - clang
+    - cpp-coveralls
+    - ggcov
+    - libboost1.55-dev 
+    - libboost-system1.55-dev 
+    - libboost-math1.55-dev 
+    - libboost-random1.55-dev
+
+before_script:
+  - mkdir build
+  - cd build
+  - cmake ..
+
+script: 
+  - make
+  - ./calculator_test
+  - ..
+
+after_success:
+  - coveralls -E ".*external.*" -E ".*CMakeFiles.*" 
